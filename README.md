@@ -63,8 +63,8 @@ bytelock-os/
 
 ### 1. Clone & Setup
 ```bash
-git clone https://github.com/your-org/bytelock-os.git
-cd bytelock-os
+git clone https://github.com/Jamo642/bytelockos.git
+cd bytelockos
 ```
 
 ### 2. Start with Docker Compose (Development)
