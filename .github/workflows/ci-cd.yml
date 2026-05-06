@@ -1,0 +1,157 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-asyncio
+
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        flake8 ai-engine ui-dashboard --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 ai-engine ui-dashboard --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Type check with mypy
+      run: |
+        pip install mypy
+        mypy ai-engine ui-dashboard --ignore-missing-imports || true
+
+    - name: Run Python tests
+      run: |
+        pytest tests/ -v --cov=ai_engine --cov=ui_dashboard --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage.xml
+        fail_ci_if_error: false
+
+  rust-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: 1.70
+        override: true
+
+    - name: Run Rust tests
+      run: |
+        cargo test --workspace --verbose
+
+    - name: Run Clippy
+      run: |
+        cargo clippy --workspace --all-targets --all-features
+
+    - name: Format check
+      run: |
+        cargo fmt --all -- --check
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [test, rust-test]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Build Docker images
+      run: |
+        docker-compose -f infrastructure/docker/docker-compose.yml build --no-cache
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: docker-build
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Start services
+      run: |
+        docker-compose -f infrastructure/docker/docker-compose.yml up -d
+        sleep 30
+
+    - name: Check services health
+      run: |
+        docker-compose -f infrastructure/docker/docker-compose.yml ps
+        curl -f http://localhost:8001/health || exit 1
+        curl -f http://localhost:8000/health || exit 1
+
+    - name: Run integration tests
+      run: |
+        docker-compose -f infrastructure/docker/docker-compose.yml exec -T ai-engine pytest tests/integration/ -v
+
+    - name: Collect logs
+      if: failure()
+      run: |
+        docker-compose -f infrastructure/docker/docker-compose.yml logs > docker-logs.txt
+
+    - name: Upload logs
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: docker-logs
+        path: docker-logs.txt
+
+    - name: Stop services
+      if: always()
+      run: |
+        docker-compose -f infrastructure/docker/docker-compose.yml down
+
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Run Trivy vulnerability scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  changelog:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Verify CHANGELOG.md updated
+      run: |
+        if ! git diff HEAD~1 CHANGELOG.md | grep -q '+'; then
+          echo "❌ CHANGELOG.md not updated"
+          exit 1
+        fi
+        echo "✅ CHANGELOG.md updated"

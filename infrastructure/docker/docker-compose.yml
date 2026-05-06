@@ -1,0 +1,176 @@
+version: '3.9'
+
+services:
+  # Apache Kafka - Event Bus (Central Nervous System)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - bytelock
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - bytelock
+
+  # PostgreSQL - State Store & Audit Logs
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: bytelock_dev_password
+      POSTGRES_DB: bytelock_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bytelock
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Cache & Session Store
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - bytelock
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Weaviate - Vector Database for RAG/Memory
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_APIKEY_ENABLED: 'true'
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: 'bytelock-key-123'
+      AUTHENTICATION_APIKEY_USERS: 'bytelock-admin'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    networks:
+      - bytelock
+
+  # Python AI Engine - Correlation & Multi-Agent Debate
+  ai-engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.ai-engine
+    ports:
+      - "8001:8001"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql://postgres:bytelock_dev_password@postgres:5432/bytelock_os
+      REDIS_URL: redis://redis:6379/0
+      VECTOR_DB_URL: http://weaviate:8080
+      LLM_PROVIDER: anthropic
+      DEBUG_MODE: 'true'
+      LOG_LEVEL: DEBUG
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      weaviate:
+        condition: service_started
+    networks:
+      - bytelock
+    volumes:
+      - ./ai-engine:/app/ai-engine
+    command: python -m uvicorn ai_engine.main:app --host 0.0.0.0 --port 8001 --reload
+
+  # Python Dashboard Backend - REST API & Webhooks
+  dashboard-backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.dashboard-backend
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql://postgres:bytelock_dev_password@postgres:5432/bytelock_os
+      REDIS_URL: redis://redis:6379/0
+      DEBUG_MODE: 'true'
+      LOG_LEVEL: DEBUG
+    depends_on:
+      kafka:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bytelock
+    volumes:
+      - ./ui-dashboard/backend:/app
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # React Frontend Dashboard
+  dashboard-frontend:
+    build:
+      context: ./ui-dashboard/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:8000
+      REACT_APP_AI_ENGINE_URL: http://localhost:8001
+    depends_on:
+      - dashboard-backend
+    networks:
+      - bytelock
+    volumes:
+      - ./ui-dashboard/frontend:/app
+    command: npm start
+
+  # Kafka UI - For debugging/monitoring
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8888:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: bytelock
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      - kafka
+    networks:
+      - bytelock
+
+volumes:
+  postgres_data:
+  weaviate_data:
+
+networks:
+  bytelock:
+    driver: bridge

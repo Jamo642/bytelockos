@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "integrations/ocsf-parsers",
+    "integrations/syslog-receiver",
+    "integrations/connectors/splunk",
+    "integrations/connectors/crowdstrike",
+    "integrations/connectors/aws",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["ByteLock Team"]
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true
