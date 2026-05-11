@@ -81,7 +81,7 @@ services:
   # Python AI Engine - Correlation & Multi-Agent Debate
   ai-engine:
     build:
-      context: .
+      context: /home/king/bytelockos
       dockerfile: infrastructure/docker/Dockerfile.ai-engine
     ports:
       - "8001:8001"
@@ -105,13 +105,13 @@ services:
     networks:
       - bytelock
     volumes:
-      - ./ai-engine:/app/ai-engine
+      - /home/king/bytelockos/ai-engine:/app/ai-engine
     command: python -m uvicorn ai_engine.main:app --host 0.0.0.0 --port 8001 --reload
 
   # Python Dashboard Backend - REST API & Webhooks
   dashboard-backend:
     build:
-      context: .
+      context: /home/king/bytelockos
       dockerfile: infrastructure/docker/Dockerfile.dashboard-backend
     ports:
       - "8000:8000"
@@ -131,13 +131,13 @@ services:
     networks:
       - bytelock
     volumes:
-      - ./ui-dashboard/backend:/app
+      - /home/king/bytelockos/ui-dashboard/backend:/app
     command: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   # React Frontend Dashboard
   dashboard-frontend:
     build:
-      context: ./ui-dashboard/frontend
+      context: /home/king/bytelockos/ui-dashboard/frontend
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
@@ -149,7 +149,7 @@ services:
     networks:
       - bytelock
     volumes:
-      - ./ui-dashboard/frontend:/app
+      - /home/king/bytelockos/ui-dashboard/frontend:/app
     command: npm start
 
   # Kafka UI - For debugging/monitoring
